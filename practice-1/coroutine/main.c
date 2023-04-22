@@ -6,6 +6,8 @@ cid_t getid_val = -1;
 
 int test_costart(void){
     printf("Hello World!\n");
+    if (co_getret(0)!=UNAUTHORIZED)
+        fail("Return value of unauthorized coroutine is not UNAUTHORIZED", __func__, __LINE__);
     return 100;
 }
 
@@ -40,34 +42,45 @@ int test_getid(void){
 }
 
 int main(){
-    srand(0);
+    srand(time(NULL));
     cid_t coroutine[MAXN];
     // test start routine
     for(int i = 0; i < 10; ++i){
         coroutine[i] = co_start(test_costart);
+        //printf("Main: after co_start %d\n", i);
+        //printf("Main: coroutine[%d] = %lld\n", i, coroutine[i]);
         if(coroutine[i] != i) fail("Coroutine ID not equal", __func__, __LINE__);
     }
     // test wait: not necessary if 1-N, think why
+    printf("Main: before co_waitall.\n");
     co_waitall();
+    //DEBUG_COROUTINE_INFO(-1);
     // test get return value
+    
     for(int i = 0; i < 10; ++i) {
+
         if(co_getret(coroutine[i]) != 100) fail("Coroutine return value failed", __func__, __LINE__);
     }
     // test nested creation
+    printf("Main: before nested co_start.\n");
     coroutine[0] = co_start(nested_costart);
     if(coroutine[0] != 10) fail("Nested coroutine ID not equal", __func__, __LINE__);
     if(co_getret(coroutine[0]) != 200) fail("Nested coroutine return value failed", __func__, __LINE__);
     // test nested and get status
-    for(int i = 0; i < 12; ++i) if(co_status(i) != FINISH) fail("Coroutine failed at status error", __func__, __LINE__);
+    for(int i = 0; i < 12; ++i) if(co_status(i) != FINISHED) fail("Coroutine failed at status error", __func__, __LINE__);
     // test yield and get status
+    
     coroutine[0] = co_start(test_yield1);
     printf("Main: after co_start\n");
     coroutine[1] = co_start(test_yield2);
+    printf("Main: after co_start 2nd\n");
     for(int i = 0; i < 2; ++i) while(co_status(coroutine[i]) != FINISHED) co_yield();
     printf("Main: after 2 coroutine yields.\n");
     // test getid
-    for(int i = 0; i < rand() % 1000; ++i) coroutine[i] = co_start(test_dummy);
+   
+    for(int i = 0; i < rand()%1000; ++i) coroutine[i] = co_start(test_dummy);
     co_waitall();
+    
     coroutine[0] = co_start(test_getid);
     co_wait(coroutine[0]);
     if(coroutine[0] != getid_val) fail("Get ID differs from internal getid", __func__, __LINE__);
