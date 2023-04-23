@@ -32,10 +32,8 @@ int main() {
         printf("Phase 2: alloc pages\n");
         tCnt = 0;
         q = p;
-        printf("Allocating %d pages of rank 0", MAXRANK0PAGE);
         for (pgIdx = 0; pgIdx < MAXRANK0PAGE; pgIdx++, q = q + 1024 * 4) {
             void *r = alloc_pages(1);
-            //printf("r: %p, q: %p\n", r, q);
             dotOk(r == q);
         }
         dotDone();

@@ -1,4 +1,4 @@
-c: 
+all: 
 	gcc -o main main.c coroutine.c utils.c -fstack-protector-all
 run:
 	./main

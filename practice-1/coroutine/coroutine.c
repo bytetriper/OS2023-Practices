@@ -8,7 +8,7 @@
 #include "coroutine.h"
 #define INITED 0
 #define UNINITED 1
-#define DEBUG_MODE
+//#define DEBUG
 // should be converted into TLS(Thread Local Storage) later
 __thread struct Scheduler *Manager=NULL;
 
@@ -71,7 +71,9 @@ int Clean_Up(struct coroutine *cor)
 {
     cor->state = FINISHED;
     /*clean up the mess*/
+#ifdef DEBUG
     printf("Coroutine %d finished.Cleaning the mess.\n", cor->id);
+#endif
     free(cor->buf);
     free(cor->sp);
     //free(cor->pos);
@@ -119,7 +121,9 @@ int Clean_Up(struct coroutine *cor)
                 fail("no available coroutines while some coroutine isn't end", "co_start", __LINE__);
                 return -1;
             }
+#ifdef DEBUG
             printf("all task finished");
+#endif
             return cor->id-1;
         }
         LinkedList_popFirst(Manager->AvailableList);
@@ -144,7 +148,7 @@ int co_start(int (*routine)(void))
     NewCor->id = Manager->size;
     Manager->Cors[(Manager->size)++] = NewCor;
     Manager->AliveNum++;
-#ifdef DEBUG_MODE
+#ifdef DEBUG
     printf("Coroutine %d created.\n", NewCor->id);
 #endif
     if (setjmp(*(Manager->RunningCors->buf)) == 0)
@@ -257,7 +261,9 @@ int co_getret(int cid)
     } 
     if (Manager->Cors[cid]->state != FINISHED)
     {
+#ifdef DEBUG
         printf("coroutine %d: ", cid);
+#endif
         fail("coroutine not finished", "co_getret", __LINE__);
         return -1;
     }
