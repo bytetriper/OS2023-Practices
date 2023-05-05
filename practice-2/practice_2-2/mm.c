@@ -20,21 +20,25 @@
 /* If you want debugging output, use the following macro.  When you hand
  * in, remove the #define DEBUG line. */
 typedef unsigned long lu;
-#define SIMPLE_REALLOC
+// #define SIMPLE_REALLOC
 #define CHECK_HEAP 0
 // #define DEBUG
 #ifdef DEBUG
 #define dbg_printf(...) \
   printf(__VA_ARGS__);  \
   fflush(stdout)
+
+#else
+#define dbg_printf(...)
+#endif
+
+#ifdef DEBUG_OUT
 #define dbg_out(...)   \
   printf(__VA_ARGS__); \
   fflush(stdout)
 #else
-#define dbg_printf(...)
 #define dbg_out(...)
 #endif
-
 /* do not change the following! */
 #ifdef DRIVER
 /* create aliases for driver tests */
@@ -61,9 +65,9 @@ inline int min(int a, int b)
 #define SIZE_T_SIZE (ALIGN(sizeof(size_t)))
 
 #define SIZE_PTR(p) ((size_t *)(((char *)(p)) - SIZE_T_SIZE))
-#define MIN_SIZE 4
+#define MIN_SIZE 5
 #define MIN_SIZE_TOLERANCE 40 // MINIMUM BLOCK SIZE TOLERANCE
-#define MAX_SIZE 8
+#define MAX_SIZE 10
 #define LIST_SIZE (MAX_SIZE - MIN_SIZE + 1)
 #define LIST_SIZE_BYTE ((LIST_SIZE) << 3)
 #define INIT_SIZE (1 << 8)
@@ -86,11 +90,14 @@ inline int min(int a, int b)
 #define BACK_HEADER(p) ((size_t *)p - HEADER_LEN)
 #define SKIP_HEADER(p) (((char *)p) + HEADER_LEN_BYTE)
 // see https://stackoverflow.com/questions/994593/how-to-do-an-integer-log2-in-c/994709#994709 for more details
-#define HACK_GET_HIGH(p) asm volatile("\tbsr %1, %0\n" \
-                                      : "=r"(y)        \
-                                      : "r"(x));
-inline int GET_HIGH(int p){
-  return min(max((size_t)log2(p), MIN_SIZE), MAX_SIZE) - MIN_SIZE;
+#define HACK_GET_HIGH(x, y) asm volatile("\tbsr %1, %0\n" \
+                                         : "=r"(y)        \
+                                         : "r"(x));
+inline int GET_HIGH(int p)
+{
+  int x;
+  HACK_GET_HIGH(p, x);
+  return min(max(x, MIN_SIZE), MAX_SIZE) - MIN_SIZE;
 }
 #define USE 1             // 11
 #define FREE 0            // 00
@@ -159,11 +166,16 @@ inline int DEBUG_SEQ_INFO(int output)
   }
   // print all the list info
   size_t *p = info.start;
+  size_t used = 0;
   while (p < info.end)
   {
     if (output)
     {
       dbg_out("size: %ld,pos: %p,footer:%p; STATE:%s\n", GET_LEN(*p), p, FOOTER(p), GET_STATE(*p) ? "USE" : "FREE");
+      if (GET_STATE(*p) == USE)
+      {
+        used += GET_LEN(*p);
+      }
     }
     if (CHECK_POINTER_VALID(p, 0, __LINE__))
     {
@@ -177,11 +189,17 @@ inline int DEBUG_SEQ_INFO(int output)
     }
     p = FOOTER(p) + FOOTER_LEN;
   }
+  // print the total used size/total size
+  if (output)
+  {
+    dbg_out("total used size: %ld, total size: %ld,use rate:%.5lf\n", used, (char *)info.end - (char *)info.start, (double)used / ((char *)info.end - (char *)info.start));
+  }
   if (output)
   {
     // print a seperating line
     dbg_out("-----------------CHECKING END-----------------------\n");
   }
+
   return 0;
 }
 inline int DEBUG_LIST_INFO(int idx, int output)
