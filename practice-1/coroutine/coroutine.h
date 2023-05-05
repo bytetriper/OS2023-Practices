@@ -12,7 +12,7 @@ typedef long long cid_t;
 #define FINISHED 3
 #define RUNNING 2
 #define MAXC 2000
-#define STACK_SIZE 4096
+#define STACK_SIZE 8192
 struct coroutine
 {
     int (*func)(void);  // function of the coroutine
@@ -28,17 +28,15 @@ struct coroutine
 };
 struct Scheduler
 {
-    pthread_t pid;
     struct coroutine *Cors[MAXC];
     struct coroutine *RunningCors;
     struct LinkedList *AvailableList;
     struct LinkedList *WaitingList;
     struct coroutine *WaitAll_Cor;
     struct LinkedList *DeadList;
-    struct coroutine *TmpStorage[2];
     int size,AliveNum;
 };
-void DEBUG_COROUTINE_INFO();
+void DEBUG_COROUTINE_INFO(int cid);
 void coroutine_init(struct coroutine * cor,int (*func)(void));
 int co_start(int (*routine)(void));
 int co_getid();

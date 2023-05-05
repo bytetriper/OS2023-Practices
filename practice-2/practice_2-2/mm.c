@@ -61,12 +61,12 @@ inline int min(int a, int b)
 #define SIZE_T_SIZE (ALIGN(sizeof(size_t)))
 
 #define SIZE_PTR(p) ((size_t *)(((char *)(p)) - SIZE_T_SIZE))
-#define MIN_SIZE 3
-#define MIN_SIZE_TOLERANCE 64 // MINIMUM BLOCK SIZE TOLERANCE
-#define MAX_SIZE 15
+#define MIN_SIZE 4
+#define MIN_SIZE_TOLERANCE 40 // MINIMUM BLOCK SIZE TOLERANCE
+#define MAX_SIZE 8
 #define LIST_SIZE (MAX_SIZE - MIN_SIZE + 1)
-#define LIST_SIZE_BYTE ((LIST_SIZE) << 3) // 11*8
-#define INIT_SIZE (1 << 10)               //
+#define LIST_SIZE_BYTE ((LIST_SIZE) << 3)
+#define INIT_SIZE (1 << 8)
 // the first bit of the header-byte is used to indica te whether the block is free or not
 #define GET_STATE(p) (((size_t)(p)) & 1)
 // the other 31 bits are used to store the size of the block(which is at least 1-byte aligned)
@@ -89,8 +89,9 @@ inline int min(int a, int b)
 #define HACK_GET_HIGH(p) asm volatile("\tbsr %1, %0\n" \
                                       : "=r"(y)        \
                                       : "r"(x));
-#define GET_HIGH(p) (min(max((size_t)log2(p), MIN_SIZE), MAX_SIZE) - MIN_SIZE)
-
+inline int GET_HIGH(int p){
+  return min(max((size_t)log2(p), MIN_SIZE), MAX_SIZE) - MIN_SIZE;
+}
 #define USE 1             // 11
 #define FREE 0            // 00
 #define CHECK_VALID_BIT 6 // 110
@@ -121,16 +122,19 @@ inline int CHECK_POINTER_VALID(void *p, int check_state, int line)
     dbg_out("[Error]Line%d: pointer is out of range at %p\n", line, ptr);
     return 1;
   }
-  if (!CHECK_VALID(*(ptr)))
-  {
-    dbg_out("[Error]Line%d: pointer is not valid at %p\n", line, ptr);
-    return 1;
-  }
+#ifdef CHECK_COMPLETE
   if (check_state && GET_STATE(*(ptr)) != USE)
   {
     dbg_out("[Error]Line%d: pointer is not in use at %p\n", line, ptr);
     return 1;
   }
+
+  if (!CHECK_VALID(*(ptr)))
+  {
+    dbg_out("[Error]Line%d: pointer is not valid at %p\n", line, ptr);
+    return 1;
+  }
+
   if (GET_LEN(*(ptr)) != GET_LEN(*(FOOTER(ptr))))
   {
     dbg_out("[Error]Line%d: pointer discoperation at %p with %lu != %lu\n", line, p, GET_LEN(*ptr), GET_LEN(*(FOOTER(ptr))));
@@ -141,6 +145,7 @@ inline int CHECK_POINTER_VALID(void *p, int check_state, int line)
     dbg_out("[Error]Line%d: pointer not aligned at %p with size:%lu\n", line, p, GET_LEN(*ptr));
     return 1;
   }
+#endif
   return 0;
 }
 inline int DEBUG_SEQ_INFO(int output)
@@ -273,7 +278,7 @@ inline int check_correctness()
   }
   return 0;
 }
-void init_info_set(struct info_set *info)
+inline void init_info_set(struct info_set *info)
 {
   dbg_printf("init_info_set\n");
   info->start = NULL;
@@ -284,7 +289,7 @@ void init_info_set(struct info_set *info)
     info->free_list[i] = NULL;
   }
 }
-size_t *alloc_block(int size, int state, size_t *p)
+inline size_t *alloc_block(int size, int state, size_t *p)
 {
   *p = (size_t)size | CHECK_VALID_BIT | state;
   *NEXT(p) = *PREV(p) = (size_t)NULL;
@@ -292,7 +297,7 @@ size_t *alloc_block(int size, int state, size_t *p)
   *footer = (size_t)size | CHECK_VALID_BIT | state;
   return footer + FOOTER_LEN; // return the next block(physical next)
 }
-size_t *alloc_block_compl(int size, int state, size_t *p, size_t *prev, size_t *next)
+inline size_t *alloc_block_compl(int size, int state, size_t *p, size_t *prev, size_t *next)
 {
   *p = (size_t)size | CHECK_VALID_BIT | state;
   *NEXT(p) = (size_t)next;
@@ -303,13 +308,6 @@ size_t *alloc_block_compl(int size, int state, size_t *p, size_t *prev, size_t *
 }
 inline void list_push(size_t *p)
 {
-  if (CHECK_POINTER_VALID(p, 0, __LINE__))
-  {
-    dbg_out("ERROR: invalid pointer\n");
-    exit(-1);
-    return;
-  }
-
   int idx = GET_HIGH(GET_LEN(*p));
   if (*(info.free_list[idx]) != (size_t)NULL)
     *PREV(*(info.free_list[idx])) = (size_t)p;
@@ -352,7 +350,7 @@ inline void split_block(int size, size_t *p)
   // print a seperating line
   dbg_printf("--------------------------------------------------\n");
 }
-int mm_init(void) // init a segregated free list with up to 32 1-byte block(memory up to 2^32)
+inline int mm_init(void) // init a segregated free list with up to 32 1-byte block(memory up to 2^32)
 {
   // print a seperating line
   dbg_printf("-----------------INITIALIZING-----------------------\n");
@@ -376,21 +374,15 @@ int mm_init(void) // init a segregated free list with up to 32 1-byte block(memo
  * malloc - Allocate a block by incrementing the brk pointer.
  *      Always allocate a block whose size is a multiple of the alignment.
  */
-void *malloc(size_t size)
+inline void *malloc(size_t size)
 {
   // print a seperating line containing "malloc"
   ++cnt;
   dbg_printf("----------------------malloc:op %d----------------------\n", cnt);
   dbg_printf("malloc %lu,aligned:%lu\n", size, ALIGN(size));
   size = ALIGN(size);
-  int idx = GET_HIGH(size); // make sure the size of the block is larger than the size of the block in the list
-  if (idx >= LIST_SIZE)
-  {
-    dbg_out("idx:%d out of bound:%d\n", idx, LIST_SIZE);
-    return NULL;
-  }
   // dbg_printf("idx:%d\n", idx);
-  //  find a block of size p that satisfies the requirement: 2^{n-1} <=size < 2^n <= p <=2^{n+1}
+  int idx = GET_HIGH(size); // make sure the size of the block is larger than the size of the block in the list
   size_t *p = info.free_list[idx];
   if (*p != (size_t)NULL)
   {
@@ -422,7 +414,7 @@ void *malloc(size_t size)
   {
     p = info.free_list[idx--];
   }
-  if (*p == (size_t)NULL)
+  if (*p == (size_t)NULL || min_idx == LIST_SIZE - 1)
   {
     size_t *new = mem_sbrk(size + HEADER_LEN_BYTE + FOOTER_LEN_BYTE);
     info.end = (size_t *)((char *)info.end + size + HEADER_LEN_BYTE + FOOTER_LEN_BYTE);
@@ -453,7 +445,7 @@ void *malloc(size_t size)
   }
   // print another seperating line
   dbg_printf("--------------------malloc-end------------------\n");
-  mm_checkheap(CHECK_HEAP);
+  // mm_checkheap(CHECK_HEAP);
   return SKIP_HEADER(nxt);
 }
 // try to merge the physical prev block, p here is the header pointer of the current block
@@ -545,8 +537,7 @@ void free(void *ptr)
   try_merge_physical_prev(p);
   // print another seperating line
   dbg_printf("--------------------free-end------------------\n");
-
-  mm_checkheap(0);
+  // mm_checkheap(0);
 }
 
 /*
@@ -634,7 +625,9 @@ void *calloc(size_t nmemb, size_t size)
  */
 void mm_checkheap(int verbose)
 {
-  if (verbose && check_correctness())
+  if (!verbose)
+    return;
+  if (check_correctness())
   {
     dbg_out("mm_checkheap: check_correctness failed at line:%d\n", __LINE__);
     exit(-1);

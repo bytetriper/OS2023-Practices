@@ -8,9 +8,9 @@
 #include "coroutine.h"
 #define INITED 0
 #define UNINITED 1
-//#define DEBUG
-// should be converted into TLS(Thread Local Storage) later
-__thread struct Scheduler *Manager=NULL;
+#define DEBUG
+//  should be converted into TLS(Thread Local Storage) later
+__thread struct Scheduler *Manager = NULL;
 
 void init_Manager()
 {
@@ -22,8 +22,6 @@ void init_Manager()
     Manager->DeadList = New_LinkedList();
     Manager->WaitAll_Cor = NULL;
     Manager->RunningCors = NULL;
-    Manager->TmpStorage[0] = NULL;
-    Manager->TmpStorage[1] = NULL;
     for (int i = 0; i < MAXC; i++)
     {
         Manager->Cors[i] = NULL;
@@ -51,24 +49,27 @@ void check_init()
 {
     if (Manager == NULL)
     {
+#ifdef DEBUG
+        printf("[Init]Manager is not initialized.\n");
+#endif
         init_Manager();
     }
 }
-int check_is_father(struct coroutine *cor,struct coroutine *father)
+int check_is_father(struct coroutine *cor, struct coroutine *father)
 {
-    while (cor->father!=NULL)
+    while (cor->father != NULL)
     {
-        if(cor->father==father)
+        if (cor->father == father)
         {
             return 1;
         }
         cor = cor->father;
     }
     return 0;
-    
 }
-int Clean_Up(struct coroutine *cor)
+int Clean_Up()
 {
+    struct coroutine *cor = Manager->RunningCors;
     cor->state = FINISHED;
     /*clean up the mess*/
 #ifdef DEBUG
@@ -76,7 +77,7 @@ int Clean_Up(struct coroutine *cor)
 #endif
     free(cor->buf);
     free(cor->sp);
-    //free(cor->pos);
+    // free(cor->pos);
     cor->pos = LinkedList_push_item(Manager->DeadList, cor);
     Manager->AliveNum--;
     // let all the coroutines waiting for this one to be finished to be ready
@@ -124,22 +125,24 @@ int Clean_Up(struct coroutine *cor)
 #ifdef DEBUG
             printf("all task finished");
 #endif
-            return cor->id-1;
+            return cor->id - 1;
         }
         LinkedList_popFirst(Manager->AvailableList);
         struct coroutine *cor = (struct coroutine *)(node->item);
-        free(node);// free the node==free the pos
+        free(node); // free the node==free the pos
         Manager->RunningCors = cor;
         Manager->RunningCors->state = RUNNING;
         longjmp(*(Manager->RunningCors->buf), 1);
     }
-    return cor->id-1;
+    return cor->id - 1;
 }
 int co_start(int (*routine)(void))
 {
     check_init();
     if (Manager->size >= MAXC)
     {
+        printf("Too many coroutines.\n");
+        exit(-1);
         return -1;
     }
     struct coroutine *NewCor = (struct coroutine *)malloc(sizeof(struct coroutine));
@@ -162,11 +165,17 @@ int co_start(int (*routine)(void))
         int *sp_top = (int *)(NewCor->sp + STACK_SIZE - 1);
         asm volatile("movq %0, %%rsp;"
                      : "=r"(sp_top));
-        Manager->RunningCors->retNum = routine();
-        return Clean_Up(Manager->RunningCors);
+        asm volatile("call *%0;"
+                     : "=r"(routine));
+        asm volatile("movq %%rax, %0;"
+                     : "=m"(Manager->RunningCors->retNum));
+        asm volatile("call Clean_Up;");
+        asm volatile("ret;");
+        //Manager->RunningCors->retNum = routine();
+        //return Clean_Up();
     }
     else
-        return NewCor->id-1;
+        return NewCor->id - 1;
 }
 int co_getid()
 {
@@ -205,7 +214,7 @@ void DEBUG_COROUTINE_INFO(int cid)
             printf("\n");
             printf("retNum=%d\n", Manager->Cors[i]->retNum);
             printf("WaitList:\n");
-            for (struct Node *node = LinkedList_head(Manager->Cors[i]->WaitList); node != NULL; node = node->nxt)
+            for (struct Node *node = LinkedList_head(Manager->Cors[i]->WaitList); node != NULL && node != Manager->Cors[i]->WaitList->tail; node = node->nxt)
             {
                 struct coroutine *cor = (struct coroutine *)(node->item);
                 printf("%d ", cor->id);
@@ -234,17 +243,17 @@ void DEBUG_COROUTINE_INFO(int cid)
             printf("FINISHED");
             break;
         }
-        printf("retNum=%d", Manager->Cors[cid]->retNum);
-        printf(" WaitList:");
-        for (struct Node *node = LinkedList_head(Manager->Cors[cid]->WaitList); node != NULL; node = node->nxt)
+        printf("  retNum=%d\n", Manager->Cors[cid]->retNum);
+        printf(" WaitList:\n");
+        for (struct Node *node = LinkedList_head(Manager->Cors[cid]->WaitList); node != NULL && node != Manager->Cors[cid]->WaitList->tail; node = node->nxt)
         {
             struct coroutine *cor = (struct coroutine *)(node->item);
             printf("%d ", cor->id);
         }
-        printf(" pos=%p", Manager->Cors[cid]->pos);
-        printf(" sp=%p", Manager->Cors[cid]->sp);
-        printf(" buf=%p", Manager->Cors[cid]->buf);
-        printf(" func=%p", Manager->Cors[cid]->func);
+        printf("pos=%p\n", Manager->Cors[cid]->pos);
+        printf("sp=%p\n", Manager->Cors[cid]->sp);
+        printf("buf=%p\n", Manager->Cors[cid]->buf);
+        printf("func=%p\n", Manager->Cors[cid]->func);
     }
 }
 int co_getret(int cid)
@@ -258,14 +267,14 @@ int co_getret(int cid)
     if (check_is_father(Manager->Cors[cid], Manager->RunningCors) == 0)
     {
         return UNAUTHORIZED;
-    } 
+    }
     if (Manager->Cors[cid]->state != FINISHED)
     {
 #ifdef DEBUG
         printf("coroutine %d: ", cid);
 #endif
-        fail("coroutine not finished", "co_getret", __LINE__);
-        return -1;
+        // fail("coroutine not finished", "co_getret", __LINE__);
+        return UNAUTHORIZED;
     }
     return Manager->Cors[cid]->retNum;
 }
@@ -274,29 +283,35 @@ int co_yield ()
     check_init();
     if (Manager->RunningCors == NULL)
     {
+        fail("no coroutine running", "co_yield", __LINE__);
         return -1;
     }
     if (Manager->RunningCors->state == FINISHED)
     {
+        fail("coroutine already finished", "co_yield", __LINE__);
         return -1;
     }
     if (Manager->RunningCors->state == WAITING)
     {
+        fail("coroutine already waiting", "co_yield", __LINE__);
         return -1;
-    }
-    if (Manager->RunningCors->state == RUNNING)
-    {
-        Manager->RunningCors->state = READY;
     }
     if (LinkedList_empty(Manager->AvailableList)) // no available coroutines
     {
         return 0;
     }
-    Manager->RunningCors->pos = LinkedList_push_item(Manager->AvailableList, Manager->RunningCors);
+    if (Manager->RunningCors->state == RUNNING)
+    {
+        Manager->RunningCors->state = READY;
+    }
     struct coroutine *NextCor = LinkedList_head_item(Manager->AvailableList);
     LinkedList_popFirst(Manager->AvailableList);
+    Manager->RunningCors->pos = LinkedList_push_item(Manager->AvailableList, Manager->RunningCors);
     if (!setjmp(*(Manager->RunningCors->buf)))
     {
+#ifdef DEBUG
+        printf("switch from coroutine %d to coroutine %d\n", Manager->RunningCors->id, NextCor->id);
+#endif
         Manager->RunningCors = NextCor;
         NextCor->state = RUNNING;
         longjmp(*(NextCor->buf), 1);
@@ -335,7 +350,12 @@ int co_waitall()
     if (NextCor == NULL)
     {
         if (Manager->AliveNum == 1) // only itself survives
+        {
+#ifdef DEBUG
+            printf("[co_waitall]only itself survives.coroutine %d: ", Manager->RunningCors->id);
+#endif
             return 0;
+        }
         fail("No Available Coroutine While some are waiting", "co_waitall", __LINE__);
         return -1;
     }
@@ -347,6 +367,9 @@ int co_waitall()
     free(NextCor->pos);
     if (!setjmp(*(Manager->RunningCors->buf)))
     {
+#ifdef DEBUG
+        printf("[co_waitall]switch from coroutine %d to coroutine %d\n", Manager->RunningCors->id, NextCor->id);
+#endif
         Manager->WaitAll_Cor = Manager->RunningCors;
         Manager->RunningCors = NextCor;
         NextCor->state = RUNNING;
@@ -364,32 +387,38 @@ int co_wait(int cid)
     ++cid;
     if (Manager->RunningCors == NULL)
     {
+        fail("coroutine is NULL", "co_wait", __LINE__);
         return -1;
     }
     if (Manager->RunningCors->state == FINISHED)
     {
+        fail("coroutine is FINISHED", "co_wait", __LINE__);
         return -1;
     }
     if (Manager->RunningCors->state == WAITING)
     {
+        fail("coroutine is waiting", "co_wait", __LINE__);
         return -1;
     }
-    if (Manager->RunningCors->state == RUNNING)
-    {
-        Manager->RunningCors->state = READY;
-    }
+
     if (cid < 0 || cid >= Manager->size)
     {
+        fail("coroutine id out of range", "co_wait", __LINE__);
         return -1;
     }
     if (Manager->Cors[cid]->state == FINISHED)
     {
+        // fail("coroutine already finished", "co_wait", __LINE__);
         return 0;
     }
     if (Manager->Cors[cid]->state == RUNNING)
     {
         fail("waiting for a running coroutine", "co_wait", __LINE__);
         return -1;
+    }
+    if (Manager->RunningCors->state == RUNNING)
+    {
+        Manager->RunningCors->state = READY;
     }
     if (Manager->Cors[cid]->state == READY || Manager->Cors[cid]->state == WAITING)
     {
@@ -399,6 +428,7 @@ int co_wait(int cid)
         if (NextCor == NULL)
         {
             printf("coroutine %d: ", Manager->RunningCors->id);
+            DEBUG_COROUTINE_INFO(-1);
             fail("No Available Coroutine", "co_wait", __LINE__);
             return -1;
         }
@@ -406,6 +436,9 @@ int co_wait(int cid)
         free(NextCor->pos);
         if (!setjmp(*(Manager->RunningCors->buf)))
         {
+#ifdef DEBUG
+            printf("[co_wait]switch from coroutine %d(wait for %d) to coroutine %d\n", Manager->RunningCors->id, cid, NextCor->id);
+#endif
             Manager->RunningCors = NextCor;
             NextCor->state = RUNNING;
             longjmp(*(NextCor->buf), 1);

@@ -1,5 +1,5 @@
 all: 
-	gcc -o main main.c coroutine.c utils.c -fstack-protector-all
+	gcc -o main main.c coroutine.c utils.c -fstack-protector-all -pthread -O0
 run:
 	./main
 
@@ -9,5 +9,7 @@ clean:
 test:
 	gcc -o test test.c utils.c -g
 
-ptest:
-	gcc -o ptest test.c coroutine.c utils.c -g -pthread
+p:
+	gcc -o ptest test.c coroutine.c utils.c -g -pthread -O0
+c:
+	rm ptest
