@@ -11,8 +11,8 @@ typedef long long cid_t;
 #define WAITING 1
 #define FINISHED 3
 #define RUNNING 2
-#define MAXC 2000
-#define STACK_SIZE 8192
+#define MAXC 250
+#define STACK_SIZE 4096
 struct coroutine
 {
     int (*func)(void);  // function of the coroutine

@@ -1,5 +1,5 @@
 all: 
-	gcc -o main main.c coroutine.c utils.c -fstack-protector-all -pthread -O0
+	gcc -o main main.c coroutine.c utils.c -g -fno-stack-protector -U_FORTIFY_SOURCE -pthread -O2
 run:
 	./main
 

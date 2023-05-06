@@ -20,9 +20,11 @@
 /* If you want debugging output, use the following macro.  When you hand
  * in, remove the #define DEBUG line. */
 typedef unsigned long lu;
-// #define SIMPLE_REALLOC
+#define SIMPLE_REALLOC
 #define CHECK_HEAP 0
-// #define DEBUG
+// #define SIMPLE_MALLOC
+//  #define DEBUG
+// #define DEBUG_OUT
 #ifdef DEBUG
 #define dbg_printf(...) \
   printf(__VA_ARGS__);  \
@@ -65,12 +67,12 @@ inline int min(int a, int b)
 #define SIZE_T_SIZE (ALIGN(sizeof(size_t)))
 
 #define SIZE_PTR(p) ((size_t *)(((char *)(p)) - SIZE_T_SIZE))
-#define MIN_SIZE 5
+#define MIN_SIZE 4
 #define MIN_SIZE_TOLERANCE 40 // MINIMUM BLOCK SIZE TOLERANCE
-#define MAX_SIZE 10
+#define MAX_SIZE 31
 #define LIST_SIZE (MAX_SIZE - MIN_SIZE + 1)
 #define LIST_SIZE_BYTE ((LIST_SIZE) << 3)
-#define INIT_SIZE (1 << 8)
+#define INIT_SIZE (1 << 5)
 // the first bit of the header-byte is used to indica te whether the block is free or not
 #define GET_STATE(p) (((size_t)(p)) & 1)
 // the other 31 bits are used to store the size of the block(which is at least 1-byte aligned)
@@ -402,8 +404,10 @@ inline void *malloc(size_t size)
   // dbg_printf("idx:%d\n", idx);
   int idx = GET_HIGH(size); // make sure the size of the block is larger than the size of the block in the list
   size_t *p = info.free_list[idx];
+#ifndef SIMPLE_MALLOC
   if (*p != (size_t)NULL)
   {
+    size_t *min_size = NULL;
     size_t *ptr = (size_t *)(*p);
     while (*NEXT(ptr) != (size_t)NULL && GET_LEN(*ptr) < size)
     {
@@ -411,28 +415,46 @@ inline void *malloc(size_t size)
     }
     if (GET_LEN(*ptr) >= size)
     {
-      if (GET_LEN(*ptr) >= size + MIN_SIZE_TOLERANCE)
+      if (min_size == NULL || GET_LEN(*ptr) < GET_LEN(*min_size))
       {
-        split_block(size, ptr);
+        min_size = ptr;
+      }
+      // print a seperating line
+    }
+    if (min_size != NULL)
+    {
+      dbg_printf("malloc: block found, min_size: %lu, p: %p\n", GET_LEN(*min_size), min_size);
+      if (GET_LEN(*min_size) >= size + MIN_SIZE_TOLERANCE)
+      {
+        split_block(size, min_size);
       }
       else
       {
-        list_pop(ptr);
-        alloc_block(GET_LEN(*ptr), USE, ptr);
+        list_pop(min_size);
+        alloc_block(GET_LEN(*min_size), USE, min_size);
       }
       // print a seperating line
       dbg_printf("--------------------malloc-end------------------\n");
-      return SKIP_HEADER(ptr);
+      return SKIP_HEADER(min_size);
     }
   }
-  int min_idx = idx;
-  idx = LIST_SIZE - 1;
-  p = info.free_list[idx];
-  while (idx > min_idx && *p == (size_t)NULL)
+  if (idx == LIST_SIZE - 1)
   {
-    p = info.free_list[idx--];
+    size_t *new = mem_sbrk(size + HEADER_LEN_BYTE + FOOTER_LEN_BYTE);
+    info.end = (size_t *)((char *)info.end + size + HEADER_LEN_BYTE + FOOTER_LEN_BYTE);
+    alloc_block(size, USE, new);
+    dbg_printf("malloc: no block found, mem_sbrk: %p\n", new);
+    // print a seperating line
+    dbg_printf("--------------------malloc-end------------------\n");
+    return SKIP_HEADER(new);
   }
-  if (*p == (size_t)NULL || min_idx == LIST_SIZE - 1)
+#endif
+  p = info.free_list[++idx];
+  while (idx < LIST_SIZE && *p == (size_t)NULL)
+  {
+    p = info.free_list[idx++];
+  }
+  if (*p == (size_t)NULL)
   {
     size_t *new = mem_sbrk(size + HEADER_LEN_BYTE + FOOTER_LEN_BYTE);
     info.end = (size_t *)((char *)info.end + size + HEADER_LEN_BYTE + FOOTER_LEN_BYTE);
@@ -482,8 +504,8 @@ inline void try_merge_physical_prev(size_t *p)
     list_pop(p);
   while (GET_STATE(*prev) == FREE)
   {
-    if (CHECK_POINTER_VALID(prev, 0, __LINE__))
-      exit(0);
+    // if (CHECK_POINTER_VALID(prev, 0, __LINE__))
+    //   exit(0);
     len += GET_SIZE(*prev);
     dbg_printf("merging a block(prev) at:%p, len:%lu;total len:%lu\n", prev, GET_LEN(*prev), len);
     list_pop(prev);
@@ -509,11 +531,11 @@ inline void try_merge_physical_next(size_t *p)
   dbg_printf("len:%d\n", len);
   while (GET_STATE(*next) == FREE)
   {
-    if (CHECK_POINTER_VALID(next, 0, __LINE__))
-    {
-      dbg_out("merging:next:%p is invalid\n", next);
-      exit(0);
-    }
+    // if(CHECK_POINTER_VALID(next, 0, __LINE__))
+    //{
+    //   dbg_out("merging:next:%p is invalid\n", next);
+    //   exit(0);
+    // }
     len += GET_SIZE(*next);
     dbg_printf("merging a block(nxt) at:%p, len:%lu;total len:%lu\n", next, GET_LEN(*next), len);
     list_pop(next);
@@ -524,12 +546,12 @@ inline void try_merge_physical_next(size_t *p)
   alloc_block(len, FREE, p);
   list_push(p);
 }
-void set_free(size_t *p)
+inline void set_free(size_t *p)
 {
   *p &= ~USE;
   *FOOTER(p) &= ~USE;
 }
-void set_use(size_t *p)
+inline void set_use(size_t *p)
 {
   *p |= USE;
   *FOOTER(p) |= USE;

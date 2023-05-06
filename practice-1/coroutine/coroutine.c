@@ -8,9 +8,9 @@
 #include "coroutine.h"
 #define INITED 0
 #define UNINITED 1
-#define DEBUG
+//#define DEBUG
 //  should be converted into TLS(Thread Local Storage) later
-__thread struct Scheduler *Manager = NULL;
+static _Thread_local struct Scheduler *Manager = NULL;
 
 void init_Manager()
 {
@@ -67,9 +67,10 @@ int check_is_father(struct coroutine *cor, struct coroutine *father)
     }
     return 0;
 }
-int Clean_Up()
+int Clean_Up(int retnum)
 {
     struct coroutine *cor = Manager->RunningCors;
+    cor->retNum = retnum;
     cor->state = FINISHED;
     /*clean up the mess*/
 #ifdef DEBUG
@@ -162,17 +163,13 @@ int co_start(int (*routine)(void))
         Manager->RunningCors = NewCor;
         Manager->RunningCors->state = RUNNING;
         NewCor->sp = malloc(STACK_SIZE << 2);
-        int *sp_top = (int *)(NewCor->sp + STACK_SIZE - 1);
-        asm volatile("movq %0, %%rsp;"
-                     : "=r"(sp_top));
-        asm volatile("call *%0;"
-                     : "=r"(routine));
-        asm volatile("movq %%rax, %0;"
-                     : "=m"(Manager->RunningCors->retNum));
-        asm volatile("call Clean_Up;");
-        asm volatile("ret;");
-        //Manager->RunningCors->retNum = routine();
-        //return Clean_Up();
+        int *sp_top = (int *)(NewCor->sp + STACK_SIZE) ;
+        asm volatile("movq %0, %%rsp; call *%1;movl %%eax, %%edi;call Clean_Up;"
+                    :   
+                     : "r"(sp_top),
+                       "r"(routine));
+        //asm volatile("ret;");
+        // Manager->RunningCors->retNum = routine();
     }
     else
         return NewCor->id - 1;
@@ -352,7 +349,7 @@ int co_waitall()
         if (Manager->AliveNum == 1) // only itself survives
         {
 #ifdef DEBUG
-            printf("[co_waitall]only itself survives.coroutine %d: ", Manager->RunningCors->id);
+            printf("[co_waitall]only itself survives:coroutine %d\n", Manager->RunningCors->id);
 #endif
             return 0;
         }

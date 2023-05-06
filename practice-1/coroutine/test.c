@@ -1,46 +1,51 @@
-#include"coroutine.h"
-#include<stdio.h>
-#include<assert.h>
-__thread int a=1;
-int func(void){
+#include "coroutine.h"
+#include <stdio.h>
+#include <assert.h>
+__thread int a = 1;
+int func(void)
+{
     a++;
-    printf("%d\n",a);
+    printf("%d\n", a);
 }
-void test(){
+void test()
+{
     co_start(func);
 }
 _Atomic int total_coroutine_count = 0;
 
 int test_multithread_coroutine_inner()
 {
-    //total_coroutine_count++;
+    // total_coroutine_count++;
     return 1;
 }
+const int TEST=2;
+
 int test_multithread_coroutine()
 {
     // printf("Running: %d, thread: %ld\n", co_getid() + 1, pthread_self());
-    const int CNT = 2;
-    cid_t coroutine[CNT];
-    for (int i = 1; i < CNT; ++i)
+    int CNT = 2;
+    long long coroutine_test[CNT];
+    for (int p = 0; p < CNT; ++p)
     {
-        coroutine[i] = co_start(test_multithread_coroutine_inner);
-        //printf("coroutine: %d sub:%d iter:%d\n", co_getid() + 1, coroutine[i] + 1, i);
-        //co_yield ();
-        //if (i > 1)
+        printf("i:%d\n", p);
+        coroutine_test[p] = co_start(test_multithread_coroutine_inner);
+        // printf("coroutine: %d sub:%d iter:%d\n", co_getid() + 1, coroutine[i] + 1, i);
+        // co_yield ();
+        // if (i > 1)
         //{
-        //    // printf("coid:%d cowait: %d\n", co_getid() + 1, i - 1);
-        //    co_wait(coroutine[i - 1]);
-        //    assert(co_status(coroutine[i - 1]) == FINISHED);
-        //}
-        //printf("coroutine: %d sub:%d second co_yield\n", co_getid() + 1, coroutine[i] + 1);
-        //co_yield ();
-        //assert(co_status(co_getid()) == RUNNING);
-        //printf("coroutine: %d sub:%d third co_yield\n", co_getid() + 1, coroutine[i] + 1);
-        //co_yield ();
+        //     // printf("coid:%d cowait: %d\n", co_getid() + 1, i - 1);
+        //     co_wait(coroutine[i - 1]);
+        //     assert(co_status(coroutine[i - 1]) == FINISHED);
+        // }
+        // printf("coroutine: %d sub:%d second co_yield\n", co_getid() + 1, coroutine[i] + 1);
+        // co_yield ();
+        // assert(co_status(co_getid()) == RUNNING);
+        // printf("coroutine: %d sub:%d third co_yield\n", co_getid() + 1, coroutine[i] + 1);
+        // co_yield ();
     }
-    //co_wait(coroutine[CNT - 1]);
-    //assert(co_status(coroutine[CNT - 1]) == FINISHED);
-    // printf("Coroutine finished: %d\n", co_getid());
+    // co_wait(coroutine[CNT - 1]);
+    // assert(co_status(coroutine[CNT - 1]) == FINISHED);
+    //  printf("Coroutine finished: %d\n", co_getid());
     return 1;
 }
 void *test_multithread_thread(void *ptr)
@@ -57,7 +62,7 @@ void *test_multithread_thread(void *ptr)
     co_waitall();
     // for (int i = 0; i < CNT; ++i)
     //     DEBUG_COROUTINE_INFO(coroutine[i]);
-    //for (int i = 0; i < CNT; ++i)
+    // for (int i = 0; i < CNT; ++i)
     //{
     //    assert(co_getret(coroutine[i]) == 1);
     //    assert(co_status(coroutine[i]) == FINISHED);
@@ -66,11 +71,11 @@ void *test_multithread_thread(void *ptr)
 }
 int test_multithread()
 {
-    const int CNT = 1;
+    const int CNT = 2;
     pthread_t threads[CNT];
     total_coroutine_count = 0;
     int ret;
-    for (int i = 0;i < CNT; ++i)
+    for (int i = 0; i < CNT; ++i)
     {
         ret = pthread_create(threads + i, NULL, test_multithread_thread, NULL);
     }
@@ -84,11 +89,9 @@ int test_multithread()
 }
 int main()
 {
-    co_start(test_multithread_coroutine_inner);
-    //const int CNT = 1;
-    //cid_t coroutine[CNT];
+    // co_start(test_multithread_coroutine_inner);
     //printf("Coroutine:%d,Tid:%ld\n", co_getid() + 1, pthread_self());
-    //co_start(test_multithread_coroutine);
+    co_start(test_multithread_coroutine);
     //co_waitall();
     return 0;
 }
