@@ -10,7 +10,7 @@
 #define UNINITED 1
 //#define DEBUG
 //  should be converted into TLS(Thread Local Storage) later
-static _Thread_local struct Scheduler *Manager = NULL;
+static __thread struct Scheduler *Manager = NULL;
 
 void init_Manager()
 {
@@ -76,8 +76,8 @@ int Clean_Up(int retnum)
 #ifdef DEBUG
     printf("Coroutine %d finished.Cleaning the mess.\n", cor->id);
 #endif
-    free(cor->buf);
-    free(cor->sp);
+    //free(cor->buf);
+    //free(cor->sp);
     // free(cor->pos);
     cor->pos = LinkedList_push_item(Manager->DeadList, cor);
     Manager->AliveNum--;
@@ -109,7 +109,7 @@ int Clean_Up(int retnum)
     {
         Manager->RunningCors = cor->Previous_RunningCor;
         LinkedList_pop(Manager->AvailableList, Manager->RunningCors->pos);
-        free(cor->Previous_RunningCor->pos);
+        //free(cor->Previous_RunningCor->pos);
         Manager->RunningCors->state = RUNNING;
         longjmp(*(Manager->RunningCors->buf), 1);
     }
@@ -130,7 +130,7 @@ int Clean_Up(int retnum)
         }
         LinkedList_popFirst(Manager->AvailableList);
         struct coroutine *cor = (struct coroutine *)(node->item);
-        free(node); // free the node==free the pos
+        //free(node); // free the node==free the pos
         Manager->RunningCors = cor;
         Manager->RunningCors->state = RUNNING;
         longjmp(*(Manager->RunningCors->buf), 1);
@@ -361,7 +361,7 @@ int co_waitall()
         Manager->RunningCors->state = WAITING;
     }
     LinkedList_popFirst(Manager->AvailableList);
-    free(NextCor->pos);
+    //free(NextCor->pos);
     if (!setjmp(*(Manager->RunningCors->buf)))
     {
 #ifdef DEBUG
@@ -430,7 +430,7 @@ int co_wait(int cid)
             return -1;
         }
         LinkedList_popFirst(Manager->AvailableList);
-        free(NextCor->pos);
+        //free(NextCor->pos);
         if (!setjmp(*(Manager->RunningCors->buf)))
         {
 #ifdef DEBUG

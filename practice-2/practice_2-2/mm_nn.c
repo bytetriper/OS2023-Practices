@@ -17,14 +17,15 @@
 #include <math.h>
 #include "mm.h"
 #include "memlib.h"
+
 /* If you want debugging output, use the following macro.  When you hand
  * in, remove the #define DEBUG line. */
 typedef unsigned long lu;
 #define SIMPLE_REALLOC
 #define CHECK_HEAP 0
-// #define SIMPLE_MALLOC
-//  #define DEBUG
-// #define DEBUG_OUT
+#define SIMPLE_MALLOC
+#define DEBUG
+#define DEBUG_OUT
 #ifdef DEBUG
 #define dbg_printf(...) \
   printf(__VA_ARGS__);  \
@@ -67,30 +68,70 @@ inline int min(int a, int b)
 #define SIZE_T_SIZE (ALIGN(sizeof(size_t)))
 
 #define SIZE_PTR(p) ((size_t *)(((char *)(p)) - SIZE_T_SIZE))
+
+// set macro about the size of the segregated free list
 #define MIN_SIZE 4
 #define MIN_SIZE_TOLERANCE 40 // MINIMUM BLOCK SIZE TOLERANCE
 #define MAX_SIZE 31
 #define LIST_SIZE (MAX_SIZE - MIN_SIZE + 1)
 #define LIST_SIZE_BYTE ((LIST_SIZE) << 3)
 #define INIT_SIZE (1 << 5)
-// the first bit of the header-byte is used to indica te whether the block is free or not
+struct info_set
+{
+  size_t *start;
+  size_t *end;
+  size_t *heap_start;
+  size_t *free_list[LIST_SIZE];
+  size_t size;
+};
+struct info_set info;
+// set macro about some frequently used operations
+//  the first bit of the header-byte is used to indica te whether the block is free or not
 #define GET_STATE(p) (((size_t)(p)) & 1)
+#define GET_PREV_STATE(p) (((size_t)(p)) & 0x10000)
 // the other 31 bits are used to store the size of the block(which is at least 1-byte aligned)
-#define NEXT(p) ((size_t *)(p) + 1)
-#define PREV(p) ((size_t *)(p) + 2)
+inline size_t *NEXT(size_t *p)
+{
+  if ((*((size_t *)p + 1) & 0xffff0000) == 0)
+  {
+    return (size_t *)NULL;
+  }
+  return (size_t *)((*((size_t *)p + 1) & 0xffff0000) + info.heap_start);
+}
+inline size_t *PREV(size_t *p)
+{
+  if ((*((size_t *)p + 1) & 0xffff) == 0)
+  {
+    return (size_t *)NULL;
+  }
+  return (size_t *)((*((size_t *)p + 1) & 0xffff) + info.heap_start);
+}
+inline void SET_NEXT(size_t *p, size_t *next)
+{
+  *((size_t *)p + 1) = ((size_t)((next == NULL ? info.heap_start : next) - info.heap_start) << 32) | (*((size_t *)p + 1) & 0xffff);
+}
+inline void SET_PREV(size_t *p, size_t *prev)
+{
+  *((size_t *)p + 1) = ((size_t)((prev == NULL ? info.heap_start : prev) - info.heap_start)) | (*((size_t *)p + 1) & 0xffff0000);
+}
 #define GET_START(p) ((size_t *)(p)-LIST_SIZE)
-#define FOOTER_LEN 1
-#define FOOTER_LEN_BIT 64
-#define FOOTER_LEN_BYTE 8
-#define HEADER_LEN 3
-#define HEADER_LEN_BYTE 24
-#define HEADER_LEN_BIT 192
-#define GET_LEN(p) (((size_t)(p)) & 0xfffffff8)
-#define GET_SIZE(p) ((GET_LEN(p) + HEADER_LEN_BYTE + FOOTER_LEN_BYTE))
-#define FOOTER(p) ((size_t *)((char *)(p) + HEADER_LEN_BYTE + GET_LEN(*((size_t *)(p)))))
-#define HEADER(p) ((size_t *)((char *)(p)-GET_LEN(*((size_t *)(p))) - HEADER_LEN_BYTE))
+#define HEADER_LEN 2
+#define HEADER_LEN_BYTE 16
+#define HEADER_LEN_BIT 144
+#define GET_LEN(p) (((size_t)(p)) & 0xfff8)
+#define GET_PREV_LEN(p) (((size_t)(p)) & 0xfff80000)
+#define GET_SIZE(p) (GET_LEN(p) + HEADER_LEN_BYTE)
+#define FOOTER(p) ((size_t *)((char *)(p) + GET_SIZE(p)) + 1)
 #define BACK_HEADER(p) ((size_t *)p - HEADER_LEN)
 #define SKIP_HEADER(p) (((char *)p) + HEADER_LEN_BYTE)
+inline size_t *GET_PHYSICAL_PREV(size_t *p)
+{
+  return (size_t *)((char *)p - GET_PREV_LEN(p) - HEADER_LEN_BYTE);
+}
+inline size_t *GET_PHYSICAL_NEXT(size_t *p)
+{
+  return (size_t *)((char *)p + GET_SIZE(p));
+}
 // see https://stackoverflow.com/questions/994593/how-to-do-an-integer-log2-in-c/994709#994709 for more details
 #define HACK_GET_HIGH(x, y) asm volatile("\tbsr %1, %0\n" \
                                          : "=r"(y)        \
@@ -110,14 +151,6 @@ inline int GET_HIGH(int p)
 /*
  * mm_init - Called when a new trace starts.
  */
-struct info_set
-{
-  size_t *start;
-  size_t *end;
-  size_t *free_list[LIST_SIZE];
-  size_t size;
-};
-struct info_set info;
 inline int CHECK_POINTER_VALID(void *p, int check_state, int line)
 {
   size_t *ptr = (size_t *)p;
@@ -173,7 +206,7 @@ inline int DEBUG_SEQ_INFO(int output)
   {
     if (output)
     {
-      dbg_out("size: %ld,pos: %p,footer:%p; STATE:%s\n", GET_LEN(*p), p, FOOTER(p), GET_STATE(*p) ? "USE" : "FREE");
+      dbg_out("size: %ld,pos: %p,nxt:%p; STATE:%s\n", GET_LEN(*p), p, FOOTER(p), GET_STATE(*p) ? "USE" : "FREE");
       if (GET_STATE(*p) == USE)
       {
         used += GET_LEN(*p);
@@ -189,7 +222,7 @@ inline int DEBUG_SEQ_INFO(int output)
       dbg_out("ERROR: size is 0\n");
       return 1;
     }
-    p = FOOTER(p) + FOOTER_LEN;
+    p = FOOTER(p);
   }
   // print the total used size/total size
   if (output)
@@ -304,6 +337,7 @@ inline void init_info_set(struct info_set *info)
   info->start = NULL;
   info->end = NULL;
   info->size = INIT_SIZE;
+  info->heap_start = NULL;
   for (int i = 0; i < LIST_SIZE; i++)
   {
     info->free_list[i] = NULL;
@@ -311,28 +345,29 @@ inline void init_info_set(struct info_set *info)
 }
 inline size_t *alloc_block(int size, int state, size_t *p)
 {
-  *p = (size_t)size | CHECK_VALID_BIT | state;
-  *NEXT(p) = *PREV(p) = (size_t)NULL;
+  *p = (*p & 0xffff) | (size_t)size | state;
+  SET_NEXT(p, NULL);
+  SET_PREV(p, NULL);
   size_t *footer = FOOTER(p);
-  *footer = (size_t)size | CHECK_VALID_BIT | state;
-  return footer + FOOTER_LEN; // return the next block(physical next)
+  *footer = (((size_t)size | state) << 32) | (*footer & 0xffff);
+  return footer; // return the next block(physical next)
 }
 inline size_t *alloc_block_compl(int size, int state, size_t *p, size_t *prev, size_t *next)
 {
-  *p = (size_t)size | CHECK_VALID_BIT | state;
-  *NEXT(p) = (size_t)next;
-  *PREV(p) = (size_t)prev;
+  *p = (*p & 0xffff) | (size_t)size | state;
+  SET_NEXT(p, next);
+  SET_PREV(p, prev);
   size_t *footer = FOOTER(p);
-  *footer = (size_t)size | CHECK_VALID_BIT | state;
-  return footer + 1; // return the next block(physical next)
+  *footer = (((size_t)size | state) << 32) | (*footer & 0xffff);
+  return footer; // return the next block(physical next)
 }
 inline void list_push(size_t *p)
 {
   int idx = GET_HIGH(GET_LEN(*p));
   if (*(info.free_list[idx]) != (size_t)NULL)
-    *PREV(*(info.free_list[idx])) = (size_t)p;
-  *NEXT(p) = (size_t)(*(info.free_list[idx]));
-  *PREV(p) = (size_t)info.free_list[idx];
+    SET_PREV((size_t *)*(info.free_list[idx]), p);
+  SET_NEXT(p, (size_t *)(*(info.free_list[idx])));
+  SET_PREV(p, (size_t *)(info.free_list[idx]));
   *(info.free_list[idx]) = (size_t)p;
 }
 inline void list_pop(size_t *p)
@@ -342,11 +377,11 @@ inline void list_pop(size_t *p)
   // give detailed info about the block p
   dbg_printf("list_pop: p: %p, next: %p, prev: %p\n", p, next, prev);
   if (next != NULL)
-    *PREV(next) = (size_t)prev;
+    SET_PREV(next, prev);
   int idx = GET_HIGH(GET_LEN(*p));
   if (prev != info.free_list[idx])
   {
-    *NEXT(prev) = (size_t)next;
+    SET_NEXT(prev, next);
   }
   else
   {
@@ -359,12 +394,12 @@ inline void split_block(int size, size_t *p)
   dbg_printf("-----------------SPLITTING BLOCK-----------------------\n");
   dbg_printf("split_block: size: %d, p: %p,block_size:%lu\n", size, p, GET_LEN(*p));
   size_t len = GET_LEN(*p);
-  assert(len >= (size_t)size + HEADER_LEN_BYTE + FOOTER_LEN_BYTE);
+  assert(len >= (size_t)size + HEADER_LEN_BYTE);
   list_pop(p);
   size_t *new = alloc_block(size, USE, p);
   dbg_printf("new_free_block: %p\n", new);
   // minus the size of the USE block, the size of the header and the size of the footer of the USE block and FREE block
-  len -= size + (HEADER_LEN_BYTE + FOOTER_LEN_BYTE);
+  len -= size + (HEADER_LEN_BYTE);
   alloc_block(len, FREE, new);
   list_push(new);
   // print a seperating line
@@ -376,11 +411,13 @@ inline int mm_init(void) // init a segregated free list with up to 32 1-byte blo
   dbg_printf("-----------------INITIALIZING-----------------------\n");
   init_info_set(&info);
   // 1 for header,1 for next, 1 for prev
-  info.start = (size_t *)mem_sbrk(info.size + FOOTER_LEN_BYTE + HEADER_LEN_BYTE + LIST_SIZE_BYTE) + LIST_SIZE;
-  info.end = (size_t *)((char *)info.start + info.size + FOOTER_LEN_BYTE + HEADER_LEN_BYTE) - 1;
+  info.heap_start = (size_t *)mem_sbrk(info.size + HEADER_LEN_BYTE + LIST_SIZE_BYTE);
+  info.start = info.heap_start + LIST_SIZE;
+  info.end = (size_t *)((char *)info.start + info.size + HEADER_LEN_BYTE) - 1;
+  info.heap_start -= 1; // to distinguish the first block and NULL
   for (int i = 0; i < LIST_SIZE; i++)
   {
-    info.free_list[i] = GET_START(info.start) + (i);
+    info.free_list[i] = GET_START(info.start) + i;
     *(info.free_list[i]) = (size_t)NULL;
   }
   *(info.free_list[GET_HIGH(info.size)]) = (size_t)info.start;
@@ -396,14 +433,17 @@ inline int mm_init(void) // init a segregated free list with up to 32 1-byte blo
  */
 inline void *malloc(size_t size)
 {
+  if (size == 0)
+    return NULL;
   // print a seperating line containing "malloc"
   ++cnt;
   dbg_printf("----------------------malloc:op %d----------------------\n", cnt);
   dbg_printf("malloc %lu,aligned:%lu\n", size, ALIGN(size));
   size = ALIGN(size);
-  // dbg_printf("idx:%d\n", idx);
+
   int idx = GET_HIGH(size); // make sure the size of the block is larger than the size of the block in the list
   size_t *p = info.free_list[idx];
+  dbg_printf("idx:%d,LIST_SIZE:%d\n", idx, LIST_SIZE);
 #ifndef SIMPLE_MALLOC
   if (*p != (size_t)NULL)
   {
@@ -440,8 +480,8 @@ inline void *malloc(size_t size)
   }
   if (idx == LIST_SIZE - 1)
   {
-    size_t *new = mem_sbrk(size + HEADER_LEN_BYTE + FOOTER_LEN_BYTE);
-    info.end = (size_t *)((char *)info.end + size + HEADER_LEN_BYTE + FOOTER_LEN_BYTE);
+    size_t *new = mem_sbrk(size + HEADER_LEN_BYTE);
+    info.end = (size_t *)((char *)info.end + size + HEADER_LEN_BYTE);
     alloc_block(size, USE, new);
     dbg_printf("malloc: no block found, mem_sbrk: %p\n", new);
     // print a seperating line
@@ -449,19 +489,24 @@ inline void *malloc(size_t size)
     return SKIP_HEADER(new);
   }
 #endif
-  p = info.free_list[++idx];
-  while (idx < LIST_SIZE && *p == (size_t)NULL)
+  if (idx < LIST_SIZE - 1)
   {
-    p = info.free_list[idx++];
+    p = info.free_list[++idx];
+    while (idx < LIST_SIZE && *p == (size_t)NULL)
+    {
+      p = info.free_list[idx++];
+    }
   }
-  if (*p == (size_t)NULL)
+  dbg_printf("final idx:%d\n", idx);
+  if (*p == (size_t)NULL || idx >= LIST_SIZE - 1)
   {
-    size_t *new = mem_sbrk(size + HEADER_LEN_BYTE + FOOTER_LEN_BYTE);
-    info.end = (size_t *)((char *)info.end + size + HEADER_LEN_BYTE + FOOTER_LEN_BYTE);
+    size_t *new = mem_sbrk(size + HEADER_LEN_BYTE);
+    info.end = (size_t *)((char *)info.end + size + HEADER_LEN_BYTE);
     alloc_block(size, USE, new);
-    dbg_printf("malloc: no block found, mem_sbrk: %p\n", new);
+    dbg_printf("malloc: no block found, mem_sbrk: %p,info.end:%p\n", new, info.end);
     // print a seperating line
     dbg_printf("--------------------malloc-end------------------\n");
+    DEBUG_SEQ_INFO(1);
     return SKIP_HEADER(new);
   }
   size_t *nxt = (size_t *)(*p);
@@ -493,42 +538,44 @@ inline void try_merge_physical_prev(size_t *p)
 {
   // print detail information about p
   dbg_printf("try_merge_physical_prev p: %p, p_size: %lu, p_nxt: %p, p_prev: %p\n", p, GET_LEN(*p), (size_t *)(*NEXT(p)), (size_t *)(*PREV(p)));
-  size_t *prev = p - FOOTER_LEN;
+  size_t *prev = GET_PHYSICAL_PREV(p);
   if (prev < info.start)
   {
+    dbg_out("prev is out of range\n");
+    exit(-1);
     return;
   }
-  prev = HEADER(prev);
   size_t len = GET_LEN(*p);
   if (GET_STATE(*prev) == FREE)
     list_pop(p);
   while (GET_STATE(*prev) == FREE)
   {
-    // if (CHECK_POINTER_VALID(prev, 0, __LINE__))
-    //   exit(0);
+    if (CHECK_POINTER_VALID(prev, 0, __LINE__))
+    {
+      dbg_out("prev is out of range\n");
+      exit(-1);
+    }
     len += GET_SIZE(*prev);
     dbg_printf("merging a block(prev) at:%p, len:%lu;total len:%lu\n", prev, GET_LEN(*prev), len);
     list_pop(prev);
     alloc_block(len, FREE, prev);
     list_push(prev);
-    prev = prev - FOOTER_LEN;
+    prev = GET_PHYSICAL_PREV(prev);
     if (prev < info.start)
       break;
-    prev = HEADER(prev);
   }
 }
 // remember to merge next first,then prev!
 inline void try_merge_physical_next(size_t *p)
 {
   dbg_printf("try_merge_physical_next p: %p, p_size: %lu, p_nxt: %p, p_prev: %p\n", p, GET_LEN(*p), (size_t *)(*NEXT(p)), (size_t *)(*PREV(p)));
-  size_t *next = FOOTER(p) + FOOTER_LEN;
+  size_t *next = GET_PHYSICAL_NEXT(p);
   if (next > info.end)
   {
     list_push(p);
     return;
   }
   size_t len = GET_LEN(*p);
-  dbg_printf("len:%d\n", len);
   while (GET_STATE(*next) == FREE)
   {
     // if(CHECK_POINTER_VALID(next, 0, __LINE__))
@@ -539,7 +586,7 @@ inline void try_merge_physical_next(size_t *p)
     len += GET_SIZE(*next);
     dbg_printf("merging a block(nxt) at:%p, len:%lu;total len:%lu\n", next, GET_LEN(*next), len);
     list_pop(next);
-    next = FOOTER(next) + FOOTER_LEN;
+    next = GET_PHYSICAL_NEXT(next);
     if (next > info.end)
       break;
   }
@@ -571,10 +618,15 @@ void free(void *ptr)
     return;
   }
   // print detail information about p
-  dbg_printf("free block at:%p,len:%lu,nxt:%p,prev:%p,STATE:%s\n", p, GET_LEN(*p), (size_t *)*(NEXT(p)), (size_t *)*PREV(p), GET_STATE(*p) == USE ? "USE" : "FREE");
+  dbg_printf("free block at:%p,len:%lu,phynxt:%p,phyprev:%p,STATE:%s\n", p, GET_LEN(*p), GET_PHYSICAL_NEXT(p), GET_PHYSICAL_PREV(p), GET_STATE(*p) == USE ? "USE" : "FREE");
+  DEBUG_SEQ_INFO(1);
+  printf("info.start:%p,info.end:%p\n", info.start, info.end);
   set_free(p);
+  dbg_printf("set free\n");
   try_merge_physical_next(p);
+  dbg_printf("try merge next\n");
   try_merge_physical_prev(p);
+  dbg_printf("try merge prev\n");
   // print another seperating line
   dbg_printf("--------------------free-end------------------\n");
   // mm_checkheap(0);
