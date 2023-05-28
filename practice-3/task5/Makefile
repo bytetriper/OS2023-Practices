@@ -1,7 +1,7 @@
 .PHONY: all
 all:
 	gcc -o main main.c
-.PHONY run
+.PHONY: run
 run:
 	./main
 .PHONY: clean
