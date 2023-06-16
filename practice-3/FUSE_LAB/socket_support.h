@@ -20,7 +20,5 @@ int server_sockfd, client_sockfd, server_len, client_len;
 
 struct sockaddr_in server_address, client_address;
 
-
-
 int SetSocketBlockingEnabled(int fd, int blocking);
 #endif
